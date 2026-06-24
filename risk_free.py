@@ -9,6 +9,7 @@ Supported modes (see :class:`RfBenchmarkMode`):
 
 - **CASHFLOW_MATCHED**: Exact cashflow-matched RF twin (Option A).
 - **KRD**: Key-rate-duration matched (Option D).
+comment
 """
 
 from __future__ import annotations
