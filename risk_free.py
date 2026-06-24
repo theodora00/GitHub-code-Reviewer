@@ -36,14 +36,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Type aliases
 ZeroRateFunc = Callable[[float], float]
 DiscountFunc = Callable[[float], float]
-
-
-# ---------------------------------------------------------------------------
-# Abstract source
-# ---------------------------------------------------------------------------
 
 
 class RiskFreeCurveSource(abc.ABC):
@@ -53,70 +47,17 @@ class RiskFreeCurveSource(abc.ABC):
     def get_zero_rate_function(
         self, as_of: date, *, currency: str | None = None,
     ) -> ZeroRateFunc:
-        """Return a callable ``z(t)`` for the given valuation date.
-
-        Parameters
-        ----------
-        as_of : date
-            Valuation date.
-        currency : str | None
-            ISO currency code selecting which curve to return. ``None``
-            (default) selects the source's base/default currency.
-            Single-currency sources ignore this argument.
-
-        Returns
-        -------
-        ZeroRateFunc
-            Callable mapping tenor (years, float) to continuously
-            compounded zero rate.
-        """
+        """Return a callable ``z(t)`` for the given valuation date."""
 
     @abc.abstractmethod
     def get_discount_function(
         self, as_of: date, *, currency: str | None = None,
     ) -> DiscountFunc:
-        """Return a callable ``D(t)`` for the given valuation date.
-
-        Parameters
-        ----------
-        as_of : date
-            Valuation date.
-        currency : str | None
-            ISO currency code selecting which curve to return. ``None``
-            (default) selects the source's base/default currency.
-            Single-currency sources ignore this argument.
-
-        Returns
-        -------
-        DiscountFunc
-            Callable mapping tenor (years, float) to the risk-free
-            discount factor D(0, t).
-        """
-
-
-# ---------------------------------------------------------------------------
-# Concrete: SwapCurveBuilder-backed source
-# ---------------------------------------------------------------------------
+        """Return a callable ``D(t)`` for the given valuation date."""
 
 
 class SwapCurveSource(RiskFreeCurveSource):
-    """Derives ``z(t)`` from :class:`~archipelago.instruments.discount.SwapCurveBuilder`.
-
-    A per-date in-memory cache holds the factory output so that the
-    ``get_zero_rate_function()`` / ``get_discount_function()`` pair share
-    a single ``builder_factory(as_of)`` call per date.  Without this
-    cache the factory (which builds and calibrates a swap curve from
-    market data) would run twice per date.
-
-    Parameters
-    ----------
-    builder_factory : Callable[[date], object]
-        Factory returning a *built and calibrated* ``SwapCurveBuilder``
-        instance for the requested date.  The builder must already have
-        ``build_curve()`` and ``calibrate_cubic_spline()`` called.  The
-        factory is responsible for sourcing market data (SOFR, futures,
-        swaps) for that date.
-    """
+    """Derives ``z(t)`` from :class:`~archipelago.instruments.discount.SwapCurveBuilder`."""
 
     def __init__(self, builder_factory: Callable[[date], dict]) -> None:
         self._factory = builder_factory
@@ -133,36 +74,19 @@ class SwapCurveSource(RiskFreeCurveSource):
     def get_zero_rate_function(
         self, as_of: date, *, currency: str | None = None,
     ) -> ZeroRateFunc:
-        """Build (or fetch from cache) and return the zero-rate function for *as_of*.
-
-        The ``currency`` argument is accepted for interface compatibility
-        with :class:`MultiCurrencySwapCurveSource` and is ignored: a
-        single-currency source returns its sole calibrated curve.
-        """
-        del currency  # single-currency source
+        del currency
         return self._get_calibration(as_of)["zero_rate_function"]
 
     def get_discount_function(
         self, as_of: date, *, currency: str | None = None,
     ) -> DiscountFunc:
-        """Build (or fetch from cache) and return the discount function D(t) for *as_of*.
-
-        The ``currency`` argument is accepted for interface compatibility
-        with :class:`MultiCurrencySwapCurveSource` and is ignored.
-        """
-        del currency  # single-currency source
+        del currency
         return self._get_calibration(as_of)["discount_function"]
 
     def extract_curve_cache(
         self, dates: list[date],
     ) -> dict[date, tuple[ZeroRateFunc, DiscountFunc]]:
-        """Return a picklable snapshot of ``(zero_rate_function, discount_function)`` per date.
-
-        Used by parallel simulation to ship pre-built curve objects to
-        worker processes without sending the (closure-bearing) factory.
-
-        Any date not yet cached is built on demand and added to ``_cache``.
-        """
+        """Return a picklable snapshot of ``(zero_rate_function, discount_function)`` per date."""
         snapshot: dict[date, tuple[ZeroRateFunc, DiscountFunc]] = {}
         for d in dates:
             calib = self._get_calibration(d)
@@ -173,27 +97,8 @@ class SwapCurveSource(RiskFreeCurveSource):
         return snapshot
 
 
-# ---------------------------------------------------------------------------
-# Concrete: cache-backed source for worker processes
-# ---------------------------------------------------------------------------
-
-
 class CachedRfCurveSource(RiskFreeCurveSource):
-    """RF curve source backed by a pre-built ``(zero_rate, discount)`` cache.
-
-    Used inside worker processes during parallel simulation: the parent
-    process builds and calibrates every required date's swap curve once,
-    extracts the resulting picklable callable objects (``DiscountFunction``,
-    ``ZeroRateFunction`` wrapping ``PchipInterpolator``), and ships the
-    cache dict to workers.  Workers reconstruct this source so that
-    ``_run_period()`` can look up RF curves without invoking the
-    (non-picklable, closure-bearing) factory in :class:`SwapCurveSource`.
-
-    Parameters
-    ----------
-    cache : dict[date, tuple[ZeroRateFunc, DiscountFunc]]
-        Pre-built per-date curve objects.
-    """
+    """RF curve source backed by a pre-built ``(zero_rate, discount)`` cache."""
 
     def __init__(
         self,
@@ -204,7 +109,7 @@ class CachedRfCurveSource(RiskFreeCurveSource):
     def get_zero_rate_function(
         self, as_of: date, *, currency: str | None = None,
     ) -> ZeroRateFunc:
-        del currency  # single-currency source
+        del currency
         entry = self._cache.get(as_of)
         if entry is None:
             raise KeyError(
@@ -216,7 +121,7 @@ class CachedRfCurveSource(RiskFreeCurveSource):
     def get_discount_function(
         self, as_of: date, *, currency: str | None = None,
     ) -> DiscountFunc:
-        del currency  # single-currency source
+        del currency
         entry = self._cache.get(as_of)
         if entry is None:
             raise KeyError(
@@ -226,26 +131,8 @@ class CachedRfCurveSource(RiskFreeCurveSource):
         return entry[1]
 
 
-# ---------------------------------------------------------------------------
-# Concrete: multi-currency RF curve source
-# ---------------------------------------------------------------------------
-
-
 class MultiCurrencySwapCurveSource(RiskFreeCurveSource):
-    """Wraps a per-currency dict of :class:`SwapCurveSource` instances.
-
-    The ``base_currency`` is used when callers do not specify a currency
-    (preserves single-curve behaviour for code paths that have not yet
-    been made currency-aware, e.g. excess-return computation).
-
-    Parameters
-    ----------
-    sources : dict[str, SwapCurveSource]
-        ISO currency code → per-currency curve source.
-    base_currency : str
-        Default currency returned when ``get_*_function(as_of)`` is
-        called without an explicit ``currency`` argument.
-    """
+    """Wraps a per-currency dict of :class:`SwapCurveSource` instances."""
 
     def __init__(
         self,
@@ -300,15 +187,7 @@ class MultiCurrencySwapCurveSource(RiskFreeCurveSource):
 
 
 class CachedMultiCurrencyRfCurveSource(RiskFreeCurveSource):
-    """Worker-side counterpart to :class:`MultiCurrencySwapCurveSource`.
-
-    Parameters
-    ----------
-    cache : dict[str, dict[date, tuple[ZeroRateFunc, DiscountFunc]]]
-        Per-currency, per-date pre-built ``(zero_rate, discount)`` callables.
-    base_currency : str
-        Default currency returned when no explicit ``currency`` is given.
-    """
+    """Worker-side counterpart to :class:`MultiCurrencySwapCurveSource`."""
 
     def __init__(
         self,
@@ -362,14 +241,8 @@ class CachedMultiCurrencyRfCurveSource(RiskFreeCurveSource):
         return self._entry(as_of, currency)[1]
 
 
-# ---------------------------------------------------------------------------
-# Synthetic hedge return sources (for "native" returns_calc mode)
-# ---------------------------------------------------------------------------
-
-# Per-date ISIN → RETURN_SYNTH map
 SynthHedgeCache = dict[date, dict[str, float]]
 
-# Map universe_source cadence to the PERIOD column value in Snowflake
 _PERIOD_BY_SOURCE: dict[str, str] = {
     "monthly": "m",
     "weekly": "w",
@@ -377,21 +250,7 @@ _PERIOD_BY_SOURCE: dict[str, str] = {
 
 
 class SynthHedgeReturnSource:
-    """Snowflake-backed source for per-bond synthetic hedge returns.
-
-    Queries ``quant.research.synth_hedge_returns`` for all rebalance
-    dates in a single round-trip.  Results are cached internally so that
-    ``get_hedge_returns()`` is a pure dict lookup.
-
-    Parameters
-    ----------
-    sf_config : object
-        Snowflake connection configuration.
-    synth_type : str
-        Hedge methodology type (``"exact"``, ``"krd_ice"``, ``"krd13"``).
-    period : str
-        Period cadence column value (``"m"`` or ``"w"``).
-    """
+    """Snowflake-backed source for per-bond synthetic hedge returns."""
 
     def __init__(self, sf_config: object, synth_type: str, period: str) -> None:
         from archipelago.data.connectors.snowflake_client import SnowflakeClient
@@ -402,12 +261,7 @@ class SynthHedgeReturnSource:
         self._cache: SynthHedgeCache = {}
 
     def load_all(self, dates: list[date]) -> None:
-        """Bulk-load hedge returns for *dates* into the internal cache.
-
-        Issues a single Snowflake query using the PARSE_JSON/FLATTEN
-        pattern.  Populates ``self._cache`` so that subsequent
-        ``get_hedge_returns()`` calls are cache hits.
-        """
+        """Bulk-load hedge returns for *dates* into the internal cache."""
         if not dates:
             return
 
@@ -420,7 +274,6 @@ class SynthHedgeReturnSource:
         pkg_root = resources.files("archipelago")
         sql_path = pkg_root.joinpath("data/connectors/sql/synth_hedge_returns.sql")
         sql = sql_path.read_text(encoding="utf-8")
-        # Replace longest placeholders first to avoid substring collisions.
         sql = sql.replace("%synth_type%", f"'{self._synth_type}'")
         sql = sql.replace("%period%", f"'{self._period}'")
         sql = sql.replace("%dates%", f"'{dates_json}'")
@@ -440,11 +293,7 @@ class SynthHedgeReturnSource:
         )
 
     def get_hedge_returns(self, as_of: date, isins: np.ndarray) -> np.ndarray:
-        """Return per-bond hedge returns aligned to *isins*.
-
-        ISINs not found in the cache for *as_of* receive 0.0 (no hedge
-        return → excess return equals total return for that bond).
-        """
+        """Return per-bond hedge returns aligned to *isins*."""
         lookup = self._cache.get(as_of, {})
         return np.array(
             [lookup.get(isin, 0.0) for isin in isins], dtype=float,
@@ -456,14 +305,7 @@ class SynthHedgeReturnSource:
 
 
 class CachedSynthHedgeReturnSource:
-    """Picklable cache-backed synthetic hedge return source for worker processes.
-
-    Parameters
-    ----------
-    cache : SynthHedgeCache
-        Pre-populated ``{date: {ISIN: RETURN_SYNTH}}`` dict extracted
-        from :meth:`SynthHedgeReturnSource.extract_cache`.
-    """
+    """Picklable cache-backed synthetic hedge return source for worker processes."""
 
     def __init__(self, cache: SynthHedgeCache) -> None:
         self._cache = cache
@@ -475,26 +317,11 @@ class CachedSynthHedgeReturnSource:
         )
 
 
-# ---------------------------------------------------------------------------
-# Duration snapshot
-# ---------------------------------------------------------------------------
-
-# ISIN → effective duration (years)
 DurationSnapshot = dict[str, float]
 
 
 def build_duration_snapshot(bonds: pd.DataFrame) -> DurationSnapshot:
-    """Extract ISIN → EFFECTIVE_DURATION from Goblin data.
-
-    Parameters
-    ----------
-    bonds : pd.DataFrame
-        Filtered Goblin universe with ``ISIN`` and ``EFFECTIVE_DURATION``.
-
-    Returns
-    -------
-    DurationSnapshot
-    """
+    """Extract ISIN → EFFECTIVE_DURATION from Goblin data."""
     snap: DurationSnapshot = {}
     for row in bonds.itertuples(index=False):
         dur = float(row.EFFECTIVE_DURATION)
@@ -502,38 +329,11 @@ def build_duration_snapshot(bonds: pd.DataFrame) -> DurationSnapshot:
     return snap
 
 
-# ---------------------------------------------------------------------------
-# Bond metadata snapshot (for cashflow-matched benchmarks)
-# ---------------------------------------------------------------------------
-
-# ISIN → (coupon_rate, maturity_date, frequency, day_count_convention, currency, oas)
-# ``oas`` is the constant option-adjusted spread in **decimal**
-# (continuously-compounded), i.e. Goblin ``OAS`` (basis points) / 10 000.
 BondMetadataSnapshot = dict[str, tuple[float, date, int, str, str, float]]
 
 
 def build_bond_metadata_snapshot(bonds: pd.DataFrame) -> BondMetadataSnapshot:
-    """Extract ISIN → (coupon_rate, maturity_date, frequency, day_count_convention, currency, oas) from Goblin data.
-
-    Parameters
-    ----------
-    bonds : pd.DataFrame
-        Filtered Goblin universe with ``ISIN``, ``COUPON``,
-        ``MATURITY_DATE``, ``CPN_FREQ``, and optionally
-        ``DAY_COUNT_CONVENTION``, ``CURRENCY`` and ``OAS`` columns.
-        ``CPN_FREQ`` is required.
-        If ``DAY_COUNT_CONVENTION`` is absent, defaults to ``"30/360"``.
-        If ``CURRENCY`` is absent or NaN for a row, defaults to ``"USD"``
-        (preserves single-currency backward compatibility).
-        If ``OAS`` is absent or NaN for a row, defaults to ``0.0`` (the
-        bond is treated as discounting on the risk-free curve only).
-        ``OAS`` is read in Goblin basis points and stored as a decimal
-        continuously-compounded spread (``OAS / 10 000``).
-
-    Returns
-    -------
-    BondMetadataSnapshot
-    """
+    """Extract ISIN → (coupon_rate, maturity_date, frequency, day_count_convention, currency, oas) from Goblin data."""
     import pandas as pd_mod
 
     has_dcc = "DAY_COUNT_CONVENTION" in bonds.columns
@@ -543,33 +343,51 @@ def build_bond_metadata_snapshot(bonds: pd.DataFrame) -> BondMetadataSnapshot:
     snap: BondMetadataSnapshot = {}
     for row in bonds.itertuples(index=False):
         isin: str = row.ISIN
-        coupon = float(row.COUPON) / 100.0  # Goblin stores as percentage
+        coupon = float(row.COUPON) / 100.0
         mat = row.MATURITY_DATE
         if isinstance(mat, pd_mod.Timestamp):
             mat = mat.date()
+
         freq = int(row.CPN_FREQ)
+
         dcc = "30/360"
         if has_dcc:
             raw_dcc = getattr(row, "DAY_COUNT_CONVENTION", None)
             if raw_dcc is not None and not pd_mod.isna(raw_dcc):
                 dcc = str(raw_dcc)
+
         ccy = "USD"
         if has_ccy:
             raw_ccy = getattr(row, "CURRENCY", None)
             if raw_ccy is not None and not pd_mod.isna(raw_ccy):
                 ccy = str(raw_ccy).upper()
+
         oas = 0.0
         if has_oas:
             raw_oas = getattr(row, "OAS", None)
             if raw_oas is not None and not pd_mod.isna(raw_oas):
-                oas = float(raw_oas) / 10_000.0  # Goblin OAS is in basis points
+                oas = float(raw_oas) / 100.0
+
         snap[isin] = (coupon, mat, freq, dcc, ccy, oas)
+
     return snap
 
 
-# ---------------------------------------------------------------------------
-# Core computation
-# ---------------------------------------------------------------------------
+def _period_years(prev_date: date | None, curr_date: date | None) -> float:
+    """Return elapsed period in curve years."""
+    if prev_date is None or curr_date is None:
+        return 0.0
+    return (curr_date - prev_date).days / CURVE_TIME_BASIS
+
+
+def _format_return_bps(value: float) -> str:
+    """Format a decimal return as basis points."""
+    return f"{value * 100:.2f} bps"
+
+
+def _linear_period_return(rate: float, years: float) -> float:
+    """Convert a continuously quoted annual rate into a period return."""
+    return rate * years
 
 
 def compute_excess_returns(
@@ -588,45 +406,18 @@ def compute_excess_returns(
     bond_meta: BondMetadataSnapshot | None = None,
     convention: "KrdHedgeConvention | None" = None,
 ) -> np.ndarray:
-    """Per-bond excess returns = total return - risk-free benchmark return.
-
-    Parameters
-    ----------
-    isins : np.ndarray
-        ISIN array defining row order.
-    total_returns : np.ndarray
-        Per-bond total returns (same order as *isins*).
-    prev_dur_snap : DurationSnapshot
-        ISIN → effective duration at the previous period.
-    curr_dur_snap : DurationSnapshot
-        ISIN → effective duration at the current period.
-    prev_zr : ZeroRateFunc
-        Zero-rate function at the previous period.
-    curr_zr : ZeroRateFunc
-        Zero-rate function at the current period.
-    mode : RfBenchmarkMode
-        Benchmark mode (default: ZCB_SLIDE for backward compatibility).
-    prev_df : DiscountFunc | None
-        Discount function D(t) at previous date (required for CASHFLOW_MATCHED, FORWARD, KRD).
-    curr_df : DiscountFunc | None
-        Discount function D(t) at current date (required for CASHFLOW_MATCHED, KRD).
-    prev_date : date | None
-        Previous rebalance date (required for CASHFLOW_MATCHED, KRD).
-    curr_date : date | None
-        Current rebalance date (required for CASHFLOW_MATCHED, YTM, KRD).
-    bond_meta : BondMetadataSnapshot | None
-        ISIN → (coupon_rate, maturity_date, frequency, day_count_convention).
-        Required for CASHFLOW_MATCHED and KRD.
-
-    Returns
-    -------
-    np.ndarray
-        Per-bond excess returns aligned to *isins*.
-    """
+    """Per-bond excess returns = total return - risk-free benchmark return."""
     n = len(isins)
     excess = np.zeros(n, dtype=float)
 
-    # Pre-build KRD synthetic cache once per rebalance date (BUG-005 fix)
+    period_years = _period_years(prev_date, curr_date)
+    if period_years > 0.0:
+        logger.debug(
+            "Computing RF excess returns over %s years (%s)",
+            period_years,
+            _format_return_bps(_linear_period_return(float(prev_zr(period_years)), period_years)),
+        )
+
     krd_cache = None
     if mode == RfBenchmarkMode.KRD and prev_df is not None and curr_df is not None:
         if prev_date is not None and curr_date is not None:
@@ -646,10 +437,9 @@ def compute_excess_returns(
             krd_cache=krd_cache,
         )
         if rf is None:
-            # Missing RF data → preserve total return as excess (BUG-006 fix)
             excess[i] = total_returns[i]
         else:
-            excess[i] = total_returns[i] - rf
+            excess[i] = total_returns[i] + rf
 
     return excess
 
@@ -678,6 +468,7 @@ def _compute_single_rf_return(
         meta = bond_meta.get(isin)
         if meta is None:
             return None
+
         coupon_rate, maturity_date, frequency, dcc, _ccy, _oas = meta
         return calc_cf_matched_realized_return(
             prev_df, curr_df, coupon_rate, maturity_date,
@@ -691,12 +482,14 @@ def _compute_single_rf_return(
             return None
         if krd_cache is None:
             return None
+
         meta = bond_meta.get(isin)
         if meta is None:
             return None
+
         coupon_rate, maturity_date, frequency, dcc, _ccy, _oas = meta
         return calc_krd_matched_realized_return(
-            prev_df, coupon_rate, maturity_date,
+            curr_df, coupon_rate, maturity_date,
             prev_date, frequency, dcc,
             hedge_cache=krd_cache,
         )
